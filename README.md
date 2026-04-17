@@ -1,6 +1,6 @@
 # Project-Groupe5 - Create 3 Autonomous Explorer
 
-ROS 2 package for the **iRobot Create 3** providing autonomous exploration, reactive obstacle avoidance, and a timed mission return-to-dock behavior.
+ROS 2 package for the **iRobot Create 3** providing autonomous exploration, reactive obstacle avoidance, manual teleoperation override, and a timed mission return-to-dock behavior.
 
 ## Behavior
 
@@ -11,10 +11,13 @@ ROS 2 package for the **iRobot Create 3** providing autonomous exploration, reac
    - If an obstacle is detected on the **left/right sides**, it veers in the opposite direction to maintain a safe distance.
 4. **Hazard Recovery**: If a physical collision is detected by the bumpers, the robot immediately executes a safety routine: it backs up for 1 second and performs an evasive rotation before resuming exploration.
 5. **Mission Timer & Return**: After **60 seconds** of autonomous activity, the robot stops exploration and invokes the `Dock` action to return to its charger.
-6. **Human Interrupt**: At any moment, publishing a `'MANUAL'` string to the `/mode` topic pauses autonomy and grants manual control. Transitioning back to `'AUTO'` resumes the mission timer and behavioral logic.
+6. **Human Interrupt**: At any moment, publishing `'TELEOP'` to the `/mode` topic pauses autonomous motion decisions and gives manual control through the teleop node. Publishing `'AUTO'` returns control to the Explorer node.
 
 ## Requirements - Implementation:
-The project follows a **Modular State Machine** architecture within a single ROS 2 Python node (`explorer`).
+The project follows a **modular two-node architecture**:
+1. `explorer`: autonomous state machine (dock/undock, obstacle avoidance, mission flow).
+2. `keyboard_handler`: terminal teleop interface and mode switching publisher.
+
 *   **Framework**: Python 3 / ROS 2 Jazzy.
 *   **Middleware**: Optimized for Hardware via `BEST_EFFORT` QoS on IR and Hazard topics.
 *   **Persistence**: Utilizes a `saved_state` buffer to ensure tasks resume correctly after a manual pause.
@@ -41,16 +44,23 @@ source install/setup.bash
 
 ## Run
 
-To launch the autonomous behavior using a specific robot namespace (e.g., `Robot5`):
+Use two terminals for normal operation.
 
+**Terminal 1 - Explorer (AUTO logic):**
 ```bash
 ros2 launch obstacle_avoidance explorer.launch.py namespace:=Robot5
 ```
 
-If you prefer to run the executable directly, you can still use:
-
+**Terminal 2 - Keyboard teleop + mode switching:**
 ```bash
-ros2 run obstacle_avoidance explorer --ros-args -r __ns:=/Robot5
+ros2 run obstacle_avoidance keyboard_handler --ros-args -r __ns:=/Robot5
+```
+
+Notes:
+- The executable available in this package is `keyboard_handler`.
+- If your local branch defines a `teleop` executable alias, your command below is also valid:
+```bash
+ros2 run obstacle_avoidance teleop --ros-args -r __ns:=/Robot5
 ```
 
 ## Launch File
@@ -76,7 +86,13 @@ ros2 launch obstacle_avoidance explorer.launch.py namespace:=Robot5
 ```
 
 ### Node: `explorer` (Python)
-A state-machine based controller that manages the robot's mission lifecycle through five operational states: `DOCKED`, `UNDOCKING`, `EXPLORING`, `RETURNING`, and `MANUAL`.
+A state-machine based controller that manages the robot's mission lifecycle through five operational states: `DOCKED`, `UNDOCKING`, `EXPLORING`, `RETURNING`, and `TELEOP` (manual override mode).
+
+### Node: `keyboard_handler` (Python)
+A non-blocking terminal controller that:
+- Publishes mode changes on `mode` (`TELEOP` or `AUTO`).
+- Publishes manual velocity commands to `cmd_vel` while teleop is active.
+- Allows rapid validation of manual override behavior without extra tooling.
 
 ### Topics & Actions
 
@@ -85,10 +101,23 @@ A state-machine based controller that manages the robot's mission lifecycle thro
 | `ir_intensity`        | `IrIntensityVector`           | Input for wall-following/avoidance         |
 | `hazard_detection`    | `HazardDetectionVector`       | Detection of bumpers or cliffs              |
 | `dock_status`         | `DockStatus`                  | Tracks if robot is charging or undocked     |
-| `mode`                | `std_msgs/String`              | Manual (`MANUAL`) or Autonomous (`AUTO`)    |
+| `mode`                | `std_msgs/String`              | Manual (`TELEOP`) or Autonomous (`AUTO`)    |
 | `cmd_vel`             | `geometry_msgs/Twist`         | Movement commands (Linear/Angular)          |
 | `undock` (Action)     | `irobot_create_msgs/Undock`   | Logic to back away from charging base       |
 | `dock` (Action)       | `irobot_create_msgs/Dock`     | Autonomous logic to seek and engage charger |
+
+## Manual Override Verification
+
+You can verify TELEOP/AUTO mode switching in two ways:
+
+1. **Raw ROS topic test**
+```bash
+ros2 topic pub -1 /Robot5/mode std_msgs/msg/String "{data: 'TELEOP'}"
+ros2 topic pub -1 /Robot5/mode std_msgs/msg/String "{data: 'AUTO'}"
+```
+
+2. **Keyboard handler test**
+Run the `keyboard_handler` node and use the configured keys to toggle mode and drive manually.
 
 ## Safety Parameters
 
