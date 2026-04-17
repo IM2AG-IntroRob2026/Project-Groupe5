@@ -1,5 +1,4 @@
 # Project-Groupe5 - Create 3 Autonomous Explorer
-By
 
 ROS 2 package for the **iRobot Create 3** providing autonomous exploration, reactive obstacle avoidance, and a timed mission return-to-dock behavior.
 
@@ -45,7 +44,23 @@ source install/setup.bash
 To launch the autonomous behavior using a specific robot namespace (e.g., `Robot5`):
 
 ```bash
+ros2 launch obstacle_avoidance explorer.launch.py namespace:=Robot5
+```
+
+If you prefer to run the executable directly, you can still use:
+
+```bash
 ros2 run obstacle_avoidance explorer --ros-args -r __ns:=/Robot5
+```
+
+## Launch File
+
+The launch file [launch/explorer.launch.py](obstacle_avoidance/launch/explorer.launch.py) starts the `explorer` node and accepts an optional `namespace` argument.
+
+Example:
+
+```bash
+ros2 launch obstacle_avoidance explorer.launch.py namespace:=Robot5
 ```
 
 ## Architecture
