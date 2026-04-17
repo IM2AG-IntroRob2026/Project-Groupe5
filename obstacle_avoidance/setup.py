@@ -1,4 +1,6 @@
 from setuptools import find_packages, setup
+import os
+from glob import glob
 
 package_name = 'obstacle_avoidance'
 
@@ -10,7 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/explorer.launch.py']),
+        # Includes the launch folder and the specific explorer launch file
+        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -25,7 +28,9 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'explorer = obstacle_avoidance.obstacle_avoidence:main',
+            # executable_name = package_name.filename:main_function
+            'explorer = obstacle_avoidance.create3_controller:main',
+            'keyboard_handler = obstacle_avoidance.keyboard_handler:main',
         ],
     },
 )
