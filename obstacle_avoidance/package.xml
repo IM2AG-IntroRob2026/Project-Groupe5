@@ -3,14 +3,16 @@
 <package format="3">
   <name>obstacle_avoidance</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Autonomous obstacle avoidance and docking behavior for the iRobot Create 3.</description>
   <maintainer email="slrosales@uninorte.edu.co">draken</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
   <depend>irobot_create_msgs</depend>
   <depend>std_msgs</depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
