@@ -98,3 +98,12 @@ A state-machine based controller that manages the robot's mission lifecycle thro
 | `IR_THRESHOLD`         | `150`   | Detection sensitivity (Higher = closer to walls)      |
 | `LINEAR_SPD`           | `0.15`  | m/s - Maximum forward exploration speed               |
 | `ANGULAR_SPD`          | `0.45`  | rad/s - Rotational speed for obstacle avoidance turns |
+
+# with keyboard handler 
+
+sudo apt install xterm
+
+to run robot with parameters 
+```bash
+ros2 launch obstacle_avoidance explorer.launch.py linear_speed:=0.25 exploration_time:=120.0
+```
