@@ -1,61 +1,35 @@
 from launch import LaunchDescription
+from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
 
 def generate_launch_description():
-    # 1. Declare Launch Configurations
-    namespace = LaunchConfiguration('namespace')
-    linear_speed = LaunchConfiguration('linear_speed')
-    angular_speed = LaunchConfiguration('angular_speed')
-    exploration_time = LaunchConfiguration('exploration_time')
-
+    ns = LaunchConfiguration('namespace')
+    
     return LaunchDescription([
-        # 2. Declare Arguments (so they can be passed via command line)
-        DeclareLaunchArgument(
-            'namespace',
-            default_value='',
-            description='Robot namespace (e.g., Robot5)'
-        ),
-        DeclareLaunchArgument(
-            'linear_speed',
-            default_value='0.15',
-            description='Forward speed in m/s'
-        ),
-        DeclareLaunchArgument(
-            'angular_speed',
-            default_value='0.5',
-            description='Turning speed in rad/s'
-        ),
-        DeclareLaunchArgument(
-            'exploration_time',
-            default_value='60.0',
-            description='Total mission time in seconds'
-        ),
+        DeclareLaunchArgument('namespace', default_value='Robot5'),
+        DeclareLaunchArgument('linear_speed', default_value='0.2'),
+        DeclareLaunchArgument('angular_speed', default_value='0.45'),
+        DeclareLaunchArgument('exploration_time', default_value='60.0'),
 
-        # 3. The Main Explorer Node (Autonomous Logic)
+        # Node 1: Autonomous Explorer
         Node(
             package='obstacle_avoidance',
             executable='explorer',
-            name='explorer_node',
-            namespace=namespace,
-            output='screen',
+            namespace=ns,
             parameters=[{
-                'linear_speed': linear_speed,
-                'angular_speed': angular_speed,
-                'exploration_time': exploration_time,
+                'linear_speed': LaunchConfiguration('linear_speed'),
+                'angular_speed': LaunchConfiguration('angular_speed'),
+                'exploration_time': LaunchConfiguration('exploration_time')
             }]
         ),
 
-        # 4. The Keyboard Handler Node (Manual Override)
+        # Node 2: Teleop Keyboard Handler (Opening in a separate xterm window)
         Node(
             package='obstacle_avoidance',
-            executable='keyboard_handler',
-            name='keyboard_handler_node',
-            namespace=namespace,
-            output='screen',
-            # Open in a separate terminal to capture keyboard input
-            emulate_tty=True,
-            prefix='xterm -e' 
-        ),
+            executable='teleop',
+            namespace=ns,
+            prefix='xterm -e', # This launches a new terminal window for focus
+            output='screen'
+        )
     ])

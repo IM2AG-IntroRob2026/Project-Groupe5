@@ -28,9 +28,9 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            # executable_name = package_name.filename:main_function
-            'explorer = obstacle_avoidance.create3_controller:main',
+            'explorer = obstacle_avoidance.obstacle_avoidence:main',
             'keyboard_handler = obstacle_avoidance.keyboard_handler:main',
+            'teleop = obstacle_avoidance.keyboard_handler:main',
         ],
     },
 )

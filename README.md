@@ -44,24 +44,51 @@ source install/setup.bash
 
 ## Run
 
-Use two terminals for normal operation.
+The normal workflow is:
+1. Launch the system in `AUTO`.
+2. Let the `keyboard_handler` decide when to switch to `TELEOP`.
+3. Press `SPACE` again to return to `AUTO`.
 
-**Terminal 1 - Explorer (AUTO logic):**
+### Option 1: Launch everything with one command
+
+This starts the autonomous Explorer node and opens the keyboard controller in a separate terminal window:
+
 ```bash
 ros2 launch obstacle_avoidance explorer.launch.py namespace:=Robot5
 ```
 
-**Terminal 2 - Keyboard teleop + mode switching:**
+The launch file passes the runtime parameters to Explorer:
+
+```bash
+ros2 launch obstacle_avoidance explorer.launch.py namespace:=Robot5 linear_speed:=0.25 angular_speed:=0.45 exploration_time:=120.0
+```
+
+### Option 2: Run the nodes manually
+
+Terminal 1 - Explorer in AUTO mode:
+
+```bash
+ros2 run obstacle_avoidance explorer --ros-args -r __ns:=/Robot5
+```
+
+Terminal 2 - Keyboard handler:
+
 ```bash
 ros2 run obstacle_avoidance keyboard_handler --ros-args -r __ns:=/Robot5
 ```
 
-Notes:
-- The executable available in this package is `keyboard_handler`.
-- If your local branch defines a `teleop` executable alias, your command below is also valid:
+If your branch uses the `teleop` alias, this is also valid:
+
 ```bash
 ros2 run obstacle_avoidance teleop --ros-args -r __ns:=/Robot5
 ```
+
+### How control is managed
+
+- Explorer subscribes to `/Robot5/mode`.
+- `keyboard_handler` publishes `TELEOP` when the user presses `SPACE`.
+- In `TELEOP`, Explorer stops driving the robot and the keyboard node publishes `cmd_vel` directly.
+- Press `SPACE` again to publish `AUTO`; Explorer resumes autonomous navigation and obstacle avoidance.
 
 ## Launch File
 
@@ -108,7 +135,7 @@ A non-blocking terminal controller that:
 
 ## Manual Override Verification
 
-You can verify TELEOP/AUTO mode switching in two ways:
+You can verify the mode switching in two ways:
 
 1. **Raw ROS topic test**
 ```bash
@@ -117,7 +144,7 @@ ros2 topic pub -1 /Robot5/mode std_msgs/msg/String "{data: 'AUTO'}"
 ```
 
 2. **Keyboard handler test**
-Run the `keyboard_handler` node and use the configured keys to toggle mode and drive manually.
+Run the keyboard node and use `SPACE` to toggle between `AUTO` and `TELEOP`.
 
 ## Safety Parameters
 
@@ -128,11 +155,10 @@ Run the `keyboard_handler` node and use the configured keys to toggle mode and d
 | `LINEAR_SPD`           | `0.15`  | m/s - Maximum forward exploration speed               |
 | `ANGULAR_SPD`          | `0.45`  | rad/s - Rotational speed for obstacle avoidance turns |
 
-# with keyboard handler 
+### Keyboard window requirement
 
-sudo apt install xterm
+The launch file opens the keyboard controller with `xterm`, so install it if needed:
 
-to run robot with parameters 
 ```bash
-ros2 launch obstacle_avoidance explorer.launch.py linear_speed:=0.25 exploration_time:=120.0
+sudo apt install xterm
 ```

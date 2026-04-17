@@ -66,6 +66,15 @@ class Explorer(Node):
     def __init__(self):
         super().__init__('autonomous_explorer')
 
+        # Tunable parameters with defaults that can be overridden from launch or CLI.
+        self.declare_parameter('linear_speed', 0.15)
+        self.declare_parameter('angular_speed', 0.45) 
+        self.declare_parameter('exploration_time', 60.0)
+
+        self.LINEAR_SPD = self.get_parameter('linear_speed').value
+        self.ANGULAR_SPD = self.get_parameter('angular_speed').value
+        self.EXPLORATION_TIME = self.get_parameter('exploration_time').value
+
         # QoS Profile for real hardware sensors
         # allowing for best effort and some message loss without blocking the system
         sensor_qos = QoSProfile(
@@ -96,7 +105,9 @@ class Explorer(Node):
         self.undock_action = ActionClient(self, Undock, 'undock')
         self.dock_action = ActionClient(self, Dock, 'dock')
 
-        self.get_logger().info(">> Explorer Node Initialized. Ready for Namespace operations")
+        self.get_logger().info(
+            f">> Explorer Node Initialized. Linear speed: {self.LINEAR_SPD}, "
+            f"Angular speed: {self.ANGULAR_SPD}, Exploration time: {self.EXPLORATION_TIME}")
 
     # Callback Methods
     """
@@ -159,7 +170,7 @@ class Explorer(Node):
         - Clear path: Move forward straight
         
         Also monitors mission elapsed time and initiates docking when
-        EXPLORATION_TIME_SEC is reached.
+        EXPLORATION_TIME is reached.
         
         Args:
             msg (IrIntensityVector): IR intensity readings from 7 sensors.
@@ -178,7 +189,7 @@ class Explorer(Node):
         # Check if it's time to return home
         elapsed = (self.get_clock().now() -
                    self.mission_start_time).nanoseconds / 1e9
-        if elapsed > EXPLORATION_TIME_SEC:
+        if elapsed > self.EXPLORATION_TIME:
             self.start_docking_mission()
             return
 
@@ -197,15 +208,15 @@ class Explorer(Node):
             twist.angular.z = ANGULAR_SPD if left_side < right_side else -ANGULAR_SPD
         elif left_side > IR_THRESHOLD:
             # Wall detected on left, veer right
-            twist.linear.x = LINEAR_SPD
+            twist.linear.x = self.LINEAR_SPD
             twist.angular.z = -0.3
         elif right_side > IR_THRESHOLD:
             # Wall detected on right, veer left
-            twist.linear.x = LINEAR_SPD
+            twist.linear.x = self.LINEAR_SPD
             twist.angular.z = 0.3
         else:
             # Path clear
-            twist.linear.x = LINEAR_SPD
+            twist.linear.x = self.LINEAR_SPD
             twist.angular.z = 0.0
 
         self.cmd_pub.publish(twist)
