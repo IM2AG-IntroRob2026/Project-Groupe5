@@ -15,7 +15,7 @@ from rclpy.node import Node
 from rclpy.action import ActionClient
 from geometry_msgs.msg import Twist
 from std_msgs.msg import String
-from irobot_create_msgs.msg import DockStatus, HazardDetectionVector, IrIntensityVector
+from irobot_create_msgs.msg import DockStatus, HazardDetectionVector, IrIntensityVector, LightringLeds, LedColor
 from irobot_create_msgs.action import Undock, DockServicing
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
@@ -26,6 +26,9 @@ class RobotState:
     EXPLORING = "EXPLORING" # Autonomous roaming + avoidance
     RETURNING = "RETURNING" # Time expired, executing docking action
     MANUAL = "MANUAL"       # Human override via teleop
+
+IR_STOP_THRESHOLD = 800    # Stop forward motion and rotate (danger zone)
+IR_SLOW_THRESHOLD = 150    # Start slowing down (warning zone)
 
 class Explorer(Node):
     def __init__(self):
@@ -56,13 +59,16 @@ class Explorer(Node):
             depth=5
         )
 
+        self.current_led_color = None  # Track color to avoid redundant publishing
+        self.light_pub = self.create_publisher(LightringLeds, 'cmd_light_ring', 10)
+
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
         
         self.mode_sub = self.create_subscription(
             String, 'mode', self.mode_callback, 10)
         
         self.ir_sub = self.create_subscription(
-            IrIntensityVector, 'ir_intensity', self.ir_logic, sensor_qos)
+            IrIntensityVector, 'ir_intensity', self.ir_sensor_logic, sensor_qos)
         
         self.hazard_sub = self.create_subscription(
             HazardDetectionVector, 'hazard_detection', self.hazard_callback, sensor_qos)
@@ -101,6 +107,84 @@ class Explorer(Node):
             back_cmd = Twist()
             back_cmd.linear.x = -0.1
             self.cmd_pub.publish(back_cmd)
+
+    def ir_sensor_logic(self, msg):
+        if self.state != RobotState.EXPLORING:
+            return
+
+        # Start timer check
+        if self.mission_start_time is None:
+            self.mission_start_time = self.get_clock().now()
+
+        elapsed = (self.get_clock().now() - self.mission_start_time).nanoseconds / 1e9
+        if elapsed > self.EXPLORATION_TIME:
+            self.start_docking_mission()
+            return
+
+        # Map all 7 sensors
+        # 0: Far Left, 1: Left, 2: Front-Left, 3: Center, 4: Front-Right, 5: Right, 6: Far Right
+        readings = [r.value for r in msg.readings]
+        
+        far_left   = readings[0]
+        left       = readings[1]
+        front_left = readings[2]
+        center     = readings[3]
+        front_right= readings[4]
+        right      = readings[5]
+        far_right  = readings[6]
+
+        # Combine front-facing sensors for the "Stop" logic
+        # If any of the three front sensors see a wall, we need to stop
+        front_intensity = max(front_left, center, front_right)
+        
+        # Side intensities for veering
+        left_side_avg = (far_left + left + front_left) / 3
+        right_side_avg = (far_right + right + front_right) / 3
+
+        twist = Twist()
+
+        # 1. EMERGENCY STOP & TURN (Object is very close)
+        if front_intensity > IR_STOP_THRESHOLD:
+            self.set_leds(255, 0, 0) # Orange
+            self.get_logger().info(">> Object Detected! Stopping to turn...")
+            twist.linear.x = 0.0
+            # Turn away from the highest intensity
+            twist.angular.z = self.ANGULAR_SPD if left_side_avg < right_side_avg else -self.ANGULAR_SPD
+
+        # 2. PROPORTIONAL SLOWDOWN (Object is visible but at a distance)
+        elif front_intensity > IR_SLOW_THRESHOLD:
+            self.set_leds(255, 80, 0) # Orange
+            # Calculate a speed multiplier (1.0 at SLOW_THRESHOLD, 0.0 at STOP_THRESHOLD)
+            # This makes the robot crawl as it gets closer
+            range_span = IR_STOP_THRESHOLD - IR_SLOW_THRESHOLD
+            proximity_factor = (front_intensity - IR_SLOW_THRESHOLD) / range_span
+            speed_multiplier = max(0.0, 1.0 - proximity_factor)
+            
+            twist.linear.x = self.LINEAR_SPD * speed_multiplier
+            
+            # Gentle veering while approaching
+            if left_side_avg > right_side_avg:
+                twist.angular.z = -0.3 # Veer right
+            else:
+                twist.angular.z = 0.3  # Veer left
+                
+        # 3. SIDE AVOIDANCE (Wall to the side, path ahead is clear)
+        elif left_side_avg > IR_SLOW_THRESHOLD:
+            self.set_leds(255, 80, 0) # Orange
+            twist.linear.x = self.LINEAR_SPD
+            twist.angular.z = -0.4 # Veer right away from left wall
+        elif right_side_avg > IR_SLOW_THRESHOLD:
+            self.set_leds(255, 80, 0) # Orange
+            twist.linear.x = self.LINEAR_SPD
+            twist.angular.z = 0.4  # Veer left away from right wall
+
+        # 4. CLEAR PATH
+        else:
+            self.set_leds(0, 255, 0) # Green
+            twist.linear.x = self.LINEAR_SPD
+            twist.angular.z = 0.0
+
+        self.cmd_pub.publish(twist)
 
     def ir_logic(self, msg):
         """
@@ -173,6 +257,21 @@ class Explorer(Node):
         """Helper to send zero velocity."""
         self.cmd_pub.publish(Twist())
 
+    def set_leds(self, r, g, b):
+        # Prevent redundant publishing to save bandwidth
+        if self.current_led_color == (r, g, b):
+            return
+            
+        msg = LightringLeds()
+        msg.override_system = True
+        
+        for _ in range(6): # The Create 3 has 6 LEDs in its ring
+            color = LedColor()
+            color.red, color.green, color.blue = r, g, b
+            msg.leds.append(color)
+            
+        self.light_pub.publish(msg)
+        self.current_led_color = (r, g, b)
 def main(args=None):
     rclpy.init(args=args)
     node = Explorer()
