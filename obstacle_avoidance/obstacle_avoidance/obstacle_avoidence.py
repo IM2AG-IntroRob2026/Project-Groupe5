@@ -17,13 +17,11 @@ import time
 
 # Mission and movement parameters
 EXPLORATION_TIME_SEC = 60.0  # Time to wander before returning home
-# IR_THRESHOLD = 150  # Infrared sensitivity threshold (higher = closer to walls before reaction)
 LINEAR_SPD = 0.15  # Forward movement speed m/s
 ANGULAR_SPD = 0.45  # Rotation speed rad/s
 
 IR_STOP_THRESHOLD = 800    # Stop forward motion and rotate (danger zone)
 IR_SLOW_THRESHOLD = 150    # Start slowing down (warning zone)
-
 """
     Enumeration of robot operational states during the autonomous exploration mission
 
@@ -233,12 +231,14 @@ class Explorer(Node):
         if self.state != RobotState.EXPLORING:
             return
 
-        # Start timer check
+        # Start timer when we begin exploration
         if self.mission_start_time is None:
             self.mission_start_time = self.get_clock().now()
 
-        elapsed = (self.get_clock().now() - self.mission_start_time).nanoseconds / 1e9
-        if elapsed > self.EXPLORATION_TIME:
+        # Check if it's time to return home
+        elapsed = (self.get_clock().now() -
+                   self.mission_start_time).nanoseconds / 1e9
+        if elapsed > self.EXPLORATION_TIME_SEC:
             self.start_docking_mission()
             return
 
@@ -255,7 +255,7 @@ class Explorer(Node):
         far_right  = readings[6]
 
         # Combine front-facing sensors for the "Stop" logic
-        # If any of the three front sensors see a wall, we need to stop
+        # If any of the three front sensors see a wall, we need to react
         front_intensity = max(front_left, center, front_right)
         
         # Side intensities for veering
@@ -264,44 +264,65 @@ class Explorer(Node):
 
         twist = Twist()
 
-        # 1. EMERGENCY STOP & TURN (Object is very close)
-        if front_intensity > IR_STOP_THRESHOLD:
-            self.set_leds(255, 0, 0) # Orange
-            self.get_logger().info(">> Object Detected! Stopping to turn...")
-            twist.linear.x = 0.0
-            # Turn away from the highest intensity
-            twist.angular.z = self.ANGULAR_SPD if left_side_avg < right_side_avg else -self.ANGULAR_SPD
-
-        # 2. PROPORTIONAL SLOWDOWN (Object is visible but at a distance)
-        elif front_intensity > IR_SLOW_THRESHOLD:
-            self.set_leds(255, 80, 0) # Orange
-            # Calculate a speed multiplier (1.0 at SLOW_THRESHOLD, 0.0 at STOP_THRESHOLD)
-            # This makes the robot crawl as it gets closer
+        # PRIORITY 1: FRONT OBSTACLE DETECTION
+        if front_intensity > IR_SLOW_THRESHOLD:
+            self.set_leds(255, 165, 0)  # Orange - caution mode
+            
+            # Calculate proportional speed reduction
+            # At IR_SLOW_THRESHOLD: full speed
+            # At IR_STOP_THRESHOLD: crawl speed (5%)
             range_span = IR_STOP_THRESHOLD - IR_SLOW_THRESHOLD
             proximity_factor = (front_intensity - IR_SLOW_THRESHOLD) / range_span
-            speed_multiplier = max(0.0, 1.0 - proximity_factor)
+            # Clamp to ensure minimum crawl speed and no exceeding full speed
+            speed_multiplier = max(0.05, min(1.0, 1.0 - proximity_factor))
             
+            # Apply proportional slowdown
             twist.linear.x = self.LINEAR_SPD * speed_multiplier
             
-            # Gentle veering while approaching
+            # Aggressive veering to escape obstacle early
             if left_side_avg > right_side_avg:
-                twist.angular.z = -0.3 # Veer right
+                # Stronger signal on left, turn right hard
+                twist.angular.z = -0.6 
             else:
-                twist.angular.z = 0.3  # Veer left
-                
-        # 3. SIDE AVOIDANCE (Wall to the side, path ahead is clear)
-        elif left_side_avg > IR_SLOW_THRESHOLD:
-            self.set_leds(255, 80, 0) # Orange
-            twist.linear.x = self.LINEAR_SPD
-            twist.angular.z = -0.4 # Veer right away from left wall
-        elif right_side_avg > IR_SLOW_THRESHOLD:
-            self.set_leds(255, 80, 0) # Orange
-            twist.linear.x = self.LINEAR_SPD
-            twist.angular.z = 0.4  # Veer left away from right wall
+                # Stronger signal on right, turn left hard
+                twist.angular.z = 0.6
+            
+            # Alert when very close
+            if front_intensity > IR_STOP_THRESHOLD * 0.8:
+                self.set_leds(255, 0, 0)  # Red - danger!
+                self.get_logger().warn(
+                    f">> CRITICAL: Obstacle very close! intensity={front_intensity:.0f}, "
+                    f"crawling at {speed_multiplier:.1%} speed")
+            elif front_intensity > IR_STOP_THRESHOLD * 0.5:
+                self.get_logger().info(
+                    f">> Approaching obstacle: intensity={front_intensity:.0f}, "
+                    f"speed={speed_multiplier:.1%}")
 
-        # 4. CLEAR PATH
+
+        # PRIORITY 2: SIDE WALL DETECTION
+        elif left_side_avg > IR_SLOW_THRESHOLD:
+            self.set_leds(255, 165, 0)  # Orange
+            # Gentle slowdown for side walls (less aggressive than front)
+            side_range = IR_STOP_THRESHOLD - IR_SLOW_THRESHOLD
+            side_proximity = (left_side_avg - IR_SLOW_THRESHOLD) / side_range
+            side_speed_mult = max(0.6, 1.0 - side_proximity * 0.4)
+            
+            twist.linear.x = self.LINEAR_SPD * side_speed_mult
+            twist.angular.z = -0.5  # Veer right away from left wall
+            
+        elif right_side_avg > IR_SLOW_THRESHOLD:
+            self.set_leds(255, 165, 0)  # Orange
+            # Gentle slowdown for side walls
+            side_range = IR_STOP_THRESHOLD - IR_SLOW_THRESHOLD
+            side_proximity = (right_side_avg - IR_SLOW_THRESHOLD) / side_range
+            side_speed_mult = max(0.6, 1.0 - side_proximity * 0.4)
+            
+            twist.linear.x = self.LINEAR_SPD * side_speed_mult
+            twist.angular.z = 0.5  # Veer left away from right wall
+
+        # PRIORITY 3: CLEAR PATH
         else:
-            self.set_leds(0, 255, 0) # Green
+            self.set_leds(0, 255, 0)  # Green - all clear
             twist.linear.x = self.LINEAR_SPD
             twist.angular.z = 0.0
 
