@@ -5,6 +5,7 @@ A non-blocking keyboard listener to control the iRobot Create3.
 
 Key Commands:
   - SPACE : Toggles between AUTO (Exploration) and TELEOP (Manual).
+    - D     : Request return-to-dock mission.
   - Arrows: Moves the robot manually (only in TELEOP mode).
   - Q     : Stops the robot and shuts down the node.
 """
@@ -36,6 +37,7 @@ class KeyboardHandler(Node):
         self.get_logger().info(
             'Create3 Keyboard Handler Ready.\n'
             '  SPACE      — Toggle AUTO / TELEOP\n'
+            '  D          — Return to Dock\n'
             '  Arrow keys — Manual Drive (Teleop mode only)\n'
             '  Q          — Quit')
 
@@ -53,6 +55,8 @@ class KeyboardHandler(Node):
                 key = self.read_key(fd)
                 if key == ' ': # SPACE
                     self.toggle_mode()
+                elif key in ('d', 'D'):
+                    self.request_dock()
                 elif key == 'q':
                     self.running = False
                     break
@@ -99,6 +103,12 @@ class KeyboardHandler(Node):
         else:
             return 
         self.cmd_pub.publish(cmd)
+
+    def request_dock(self):
+        msg = String()
+        msg.data = 'DOCK'
+        self.mode_pub.publish(msg)
+        self.get_logger().info('Requesting DOCK mode')
 
 def main(args=None):
     rclpy.init(args=args)
