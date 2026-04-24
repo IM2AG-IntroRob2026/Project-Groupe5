@@ -4,14 +4,29 @@ ROS 2 package for the **iRobot Create 3** providing autonomous exploration, reac
 
 ## Behavior
 
-1. **Initial Boot & Undocking**: Upon startup, if the robot detects it is on the charging station, it automatically invokes the `Undock` action and moves away from the base.
-2. **Autonomous Exploration**: Once undocked, the robot enters the `EXPLORING` state. It wanders forward while monitoring its 7 Infrared (IR) intensity sensors.
-3. **Reactive Avoidance**:
-   - If an obstacle is detected in the **center**, the robot rotates away from the side with higher intensity.
-   - If an obstacle is detected on the **left/right sides**, it veers in the opposite direction to maintain a safe distance.
-4. **Hazard Recovery**: If a physical collision is detected by the bumpers, the robot immediately executes a safety routine: it backs up for 1 second and performs an evasive rotation before resuming exploration.
-5. **Mission Timer & Return**: After **60 seconds** of autonomous activity, the robot stops exploration and invokes the `Dock` action to return to its charger.
-6. **Human Interrupt**: At any moment, publishing a `'MANUAL'` string to the `/mode` topic pauses autonomy and grants manual control. Transitioning back to `'AUTO'` resumes the mission timer and behavioral logic.
+1. **Initial Boot & Undocking**: On startup, if the robot is docked, it automatically calls `Undock`.
+2. **Autonomous Exploration**: In `EXPLORING`, the robot uses 7 IR sensors and computes:
+   - `max_front = max(readings[2], readings[3], readings[4])`
+   - averaged sides (`left_side`, `right_side`) to choose turn direction.
+3. **Proportional Obstacle Avoidance**:
+   - `AWARE` zone: early veer and light slowdown.
+   - `WARNING` zone: proportional braking based on front intensity.
+   - `CLOSE` zone: stop forward movement and turn aggressively.
+4. **Hazard Recovery (Non-blocking)**: On bumper contact, robot switches to `ESCAPING` for a short timed window (reverse + turn), then resumes its previous state.
+5. **Timed Return-to-Dock**: After mission timeout, robot enters `RETURNING` and keeps obstacle avoidance active while trying to dock.
+6. **Manual Return Command**: Publishing `DOCK` (or `RETURN`) on `mode` also triggers `RETURNING` with avoidance enabled.
+7. **Human Override**: `TELEOP` pauses autonomy and gives manual control; `AUTO` resumes previous autonomous state.
+
+## LED Colors (State Feedback)
+
+| Color | Meaning |
+|-------|---------|
+| Green | Path clear / nominal autonomous motion |
+| Yellow | Early obstacle awareness / gentle veer |
+| Orange | Warning zone / braking + stronger turn |
+| Red | Critical close obstacle / no forward + aggressive turn |
+| Purple | Bumper recovery (`ESCAPING`) |
+| Blue | Manual control (`TELEOP`) |
 
 ## Requirements - Implementation:
 The project follows a **Modular State Machine** architecture within a single ROS 2 Python node (`explorer`).
@@ -53,6 +68,29 @@ If you prefer to run the executable directly, you can still use:
 ros2 run obstacle_avoidance explorer --ros-args -r __ns:=/Robot5
 ```
 
+### Keyboard Controls
+
+The keyboard node supports:
+
+- `SPACE`: Toggle `AUTO` / `TELEOP`
+- `D`: Request return to dock (`DOCK` command)
+- `Arrow keys`: Manual driving in `TELEOP`
+- `Q`: Quit keyboard handler
+
+## Manual Commands
+
+Request dock/return using the `mode` topic:
+
+```bash
+ros2 topic pub /Robot5/mode std_msgs/msg/String "{data: 'DOCK'}" -1
+```
+
+Resume autonomous mode:
+
+```bash
+ros2 topic pub /Robot5/mode std_msgs/msg/String "{data: 'AUTO'}" -1
+```
+
 ## Launch File
 
 The launch file [launch/explorer.launch.py](obstacle_avoidance/launch/explorer.launch.py) starts the `explorer` node and accepts an optional `namespace` argument.
@@ -76,7 +114,14 @@ ros2 launch obstacle_avoidance explorer.launch.py namespace:=Robot5
 ```
 
 ### Node: `explorer` (Python)
-A state-machine based controller that manages the robot's mission lifecycle through five operational states: `DOCKED`, `UNDOCKING`, `EXPLORING`, `RETURNING`, and `MANUAL`.
+A state-machine controller with six operational states:
+
+- `DOCKED`
+- `UNDOCKING`
+- `EXPLORING`
+- `ESCAPING`
+- `RETURNING`
+- `MANUAL`
 
 ### Topics & Actions
 
@@ -85,25 +130,46 @@ A state-machine based controller that manages the robot's mission lifecycle thro
 | `ir_intensity`        | `IrIntensityVector`           | Input for wall-following/avoidance         |
 | `hazard_detection`    | `HazardDetectionVector`       | Detection of bumpers or cliffs              |
 | `dock_status`         | `DockStatus`                  | Tracks if robot is charging or undocked     |
-| `mode`                | `std_msgs/String`              | Manual (`MANUAL`) or Autonomous (`AUTO`)    |
+| `mode`                | `std_msgs/String`             | `TELEOP`, `AUTO`, `DOCK`/`RETURN`           |
 | `cmd_vel`             | `geometry_msgs/Twist`         | Movement commands (Linear/Angular)          |
+| `cmd_lightring`       | `LightringLeds`               | Ring LED state feedback                     |
 | `undock` (Action)     | `irobot_create_msgs/Undock`   | Logic to back away from charging base       |
 | `dock` (Action)       | `irobot_create_msgs/Dock`     | Autonomous logic to seek and engage charger |
 
-## Safety Parameters
+## Key Parameters
 
 | Parameter              | Value   | Description                                           |
 |------------------------|---------|-------------------------------------------------------|
-| `EXPLORATION_TIME_SEC` | `60.0`  | Duration of the mission before returning to dock      |
-| `IR_THRESHOLD`         | `150`   | Detection sensitivity (Higher = closer to walls)      |
-| `LINEAR_SPD`           | `0.15`  | m/s - Maximum forward exploration speed               |
-| `ANGULAR_SPD`          | `0.45`  | rad/s - Rotational speed for obstacle avoidance turns |
+| `exploration_time`     | `60.0`  | Duration before automatic return mode                 |
+| `linear_speed`         | `0.15`  | m/s - max linear speed                                |
+| `angular_speed`        | `0.50`  | rad/s - base turn speed                               |
+| `ir_very_early_threshold` | `100` | Early awareness threshold                             |
+| `ir_slow_threshold`    | `250`   | Proportional braking start                            |
+| `ir_stop_threshold`    | `500`   | Critical close threshold                              |
 
-# with keyboard handler 
+## Return-to-Dock Safety Logic
+
+- During `RETURNING`, obstacle avoidance remains active (it does not freeze navigation).
+- Dock goal is retried periodically (non-blocking) when path is sufficiently clear.
+- If repeated red-zone detections happen near corners, a short turn-lock window is applied:
+   - no forward speed
+   - forced turn for a short duration
+   - helps avoid oscillation/stalling behavior near obstacles
+
+# with keyboard handler
 
 sudo apt install xterm
 
-to run robot with parameters 
+to run robot with parameters
 ```bash
 ros2 launch obstacle_avoidance explorer.launch.py linear_speed:=0.25 exploration_time:=120.0
+```
+
+Example with IR thresholds:
+
+```bash
+ros2 launch obstacle_avoidance explorer.launch.py namespace:=Robot5 \
+   linear_speed:=0.12 angular_speed:=0.65 exploration_time:=120.0 \
+   ir_very_early_threshold:=100 ir_early_threshold:=150 \
+   ir_slow_threshold:=250 ir_stop_threshold:=500
 ```
