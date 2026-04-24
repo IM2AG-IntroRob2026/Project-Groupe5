@@ -16,7 +16,7 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 import time
 
 # Mission and movement parameters
-EXPLORATION_TIME_SEC = 60.0  # Time to wander before returning home
+EXPLORATION_TIME = 60.0  # Time to wander before returning home
 LINEAR_SPD = 0.15  # Forward movement speed m/s
 ANGULAR_SPD = 0.45  # Rotation speed rad/s
 
@@ -76,7 +76,7 @@ class Explorer(Node):
 
         self.LINEAR_SPD = self.get_parameter('linear_speed').value
         self.ANGULAR_SPD = self.get_parameter('angular_speed').value
-        self.EXPLORATION_TIME_SEC = self.get_parameter('exploration_time').value
+        self.EXPLORATION_TIME = self.get_parameter('exploration_time').value
         self.IR_THRESHOLD = self.get_parameter('ir_threshold').value
 
         # QoS Profile for real hardware sensors
@@ -238,7 +238,7 @@ class Explorer(Node):
         # Check if it's time to return home
         elapsed = (self.get_clock().now() -
                    self.mission_start_time).nanoseconds / 1e9
-        if elapsed > self.EXPLORATION_TIME_SEC:
+        if elapsed > self.EXPLORATION_TIME:
             self.start_docking_mission()
             return
 
