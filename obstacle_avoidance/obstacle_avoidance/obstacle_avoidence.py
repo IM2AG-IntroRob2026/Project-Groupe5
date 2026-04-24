@@ -20,8 +20,12 @@ EXPLORATION_TIME = 60.0  # Time to wander before returning home
 LINEAR_SPD = 0.15  # Forward movement speed m/s
 ANGULAR_SPD = 0.45  # Rotation speed rad/s
 
-IR_STOP_THRESHOLD = 800    # Stop forward motion and rotate (danger zone)
-IR_SLOW_THRESHOLD = 150    # Start slowing down (warning zone)
+# These values CONTROL when the robot starts avoiding obstacles
+# Lower values = earlier detection = safer but slower
+IR_STOP_THRESHOLD = 800      # DANGER: Very close (< 5 cm), hard stop
+IR_SLOW_THRESHOLD = 200      # WARNING: Medium distance (~ 10 cm), start slowing
+IR_EARLY_THRESHOLD = 100     # CAUTION: Far distance (~ 15 cm), gentle slowdown
+IR_VERY_EARLY_THRESHOLD = 60 # DETECTION: Very far (~ 20 cm), start avoiding
 """
     Enumeration of robot operational states during the autonomous exploration mission
 
@@ -67,17 +71,25 @@ class Explorer(Node):
     def __init__(self):
         super().__init__('autonomous_explorer')
 
-        # Tunable parameters with defaults that can be overridden from launch or CLI.
-        # Allows tuning speeds via 'ros2 launch' or 'ros2 run'
+        # Tunable parameters with defaults that can be overridden from launch 
         self.declare_parameter('linear_speed', 0.15)
         self.declare_parameter('angular_speed', 0.5)
         self.declare_parameter('exploration_time', 60.0)
-        self.declare_parameter('ir_threshold', 50) # IR sensitivity (higher = closer)
-
+    
+        self.declare_parameter('ir_very_early_threshold', 60)
+        self.declare_parameter('ir_early_threshold', 100)
+        self.declare_parameter('ir_slow_threshold', 200)
+        self.declare_parameter('ir_stop_threshold', 800)
+ 
         self.LINEAR_SPD = self.get_parameter('linear_speed').value
         self.ANGULAR_SPD = self.get_parameter('angular_speed').value
         self.EXPLORATION_TIME = self.get_parameter('exploration_time').value
-        self.IR_THRESHOLD = self.get_parameter('ir_threshold').value
+        
+        # Get IR thresholds from parameters
+        self.IR_VERY_EARLY_THRESHOLD = self.get_parameter('ir_very_early_threshold').value
+        self.IR_EARLY_THRESHOLD = self.get_parameter('ir_early_threshold').value
+        self.IR_SLOW_THRESHOLD = self.get_parameter('ir_slow_threshold').value
+        self.IR_STOP_THRESHOLD = self.get_parameter('ir_stop_threshold').value
 
         # QoS Profile for real hardware sensors
         # allowing for best effort and some message loss without blocking the system
@@ -95,6 +107,7 @@ class Explorer(Node):
 
         self.current_led_color = None  # Track color to avoid redundant publishing
         self.light_pub = self.create_publisher(LightringLeds, 'cmd_light_ring', 10)
+        self.set_leds(0, 255, 0)
         # Publishers & Subscribers setup
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel', 10)
 
@@ -184,150 +197,151 @@ class Explorer(Node):
                                     readings[3]: center
                                     readings[4-6]: right side
     """
-    def ir_sensor_logic(self, msg):
-        if self.state != RobotState.EXPLORING:
-            return
-
-        # Start timer when we begin exploration
-        if self.mission_start_time is None:
-            self.mission_start_time = self.get_clock().now()
-
-        # Check if it's time to return home
-        elapsed = (self.get_clock().now() -
-                   self.mission_start_time).nanoseconds / 1e9
-        if elapsed > self.EXPLORATION_TIME:
-            self.start_docking_mission()
-            return
-
-        # Simple logic: Map 7 sensors to L / R zones
-        readings = [r.value for r in msg.readings]
-        left_side = sum(readings[0:3]) / 3
-        right_side = sum(readings[4:7]) / 3
-        center = readings[3]
-
-        twist = Twist()
-
-        if center > IR_THRESHOLD:
-            # Something in front, decide direction based on intensities
-            self.get_logger().info(">> Front path blocked. Calculating turn direction...")
-            twist.linear.x = 0.0
-            twist.angular.z = ANGULAR_SPD if left_side < right_side else -ANGULAR_SPD
-        elif left_side > IR_THRESHOLD:
-            # Wall detected on left, veer right
-            twist.linear.x = self.LINEAR_SPD
-            twist.angular.z = -0.3
-        elif right_side > IR_THRESHOLD:
-            # Wall detected on right, veer left
-            twist.linear.x = self.LINEAR_SPD
-            twist.angular.z = 0.3
-        else:
-            # Path clear
-            twist.linear.x = self.LINEAR_SPD
-            twist.angular.z = 0.0
-
-        self.cmd_pub.publish(twist)
-
     def ir_logic(self, msg):
+        """
+        IMPROVED OBSTACLE AVOIDANCE using 4-LEVEL DETECTION:
+        
+        Level 1 (IR > STOP):      Emergency crawl + hard turn
+        Level 2 (IR > SLOW):      Proportional slowdown + turn
+        Level 3 (IR > EARLY):     Gentle slowdown + prepare turn
+        Level 4 (IR > V_EARLY):   First detection, subtle adjustment
+        
+        This prevents bumper hits by detecting obstacles EARLY and reacting
+        SMOOTHLY before they're too close.
+        """
         if self.state != RobotState.EXPLORING:
             return
-
-        # Start timer when we begin exploration
+ 
+        # Start exploration timer
         if self.mission_start_time is None:
             self.mission_start_time = self.get_clock().now()
-
-        # Check if it's time to return home
-        elapsed = (self.get_clock().now() -
-                   self.mission_start_time).nanoseconds / 1e9
+ 
+        # Check if mission time expired
+        elapsed = (self.get_clock().now() - self.mission_start_time).nanoseconds / 1e9
         if elapsed > self.EXPLORATION_TIME:
             self.start_docking_mission()
             return
-
-        # Map all 7 sensors
-        # 0: Far Left, 1: Left, 2: Front-Left, 3: Center, 4: Front-Right, 5: Right, 6: Far Right
+ 
+        # ============================================
+        # EXTRACT IR SENSOR READINGS
+        # ============================================
         readings = [r.value for r in msg.readings]
         
-        far_left   = readings[0]
-        left       = readings[1]
-        front_left = readings[2]
-        center     = readings[3]
-        front_right= readings[4]
-        right      = readings[5]
-        far_right  = readings[6]
-
-        # Combine front-facing sensors for the "Stop" logic
-        # If any of the three front sensors see a wall, we need to react
+        far_left    = readings[0]
+        left        = readings[1]
+        front_left  = readings[2]
+        center      = readings[3]
+        front_right = readings[4]
+        right       = readings[5]
+        far_right   = readings[6]
+ 
+        # Front obstacle detection (most important)
         front_intensity = max(front_left, center, front_right)
         
-        # Side intensities for veering
+        # Side obstacle detection
         left_side_avg = (far_left + left + front_left) / 3
         right_side_avg = (far_right + right + front_right) / 3
-
+ 
         twist = Twist()
-
-        # PRIORITY 1: FRONT OBSTACLE DETECTION
-        if front_intensity > IR_SLOW_THRESHOLD:
-            self.set_leds(255, 165, 0)  # Orange - caution mode
+ 
+        # ============================================
+        # PRIORITY 1: FRONT OBSTACLE AVOIDANCE
+        # ============================================
+        if front_intensity > self.IR_VERY_EARLY_THRESHOLD:
             
-            # Calculate proportional speed reduction
-            # At IR_SLOW_THRESHOLD: full speed
-            # At IR_STOP_THRESHOLD: crawl speed (5%)
-            range_span = IR_STOP_THRESHOLD - IR_SLOW_THRESHOLD
-            proximity_factor = (front_intensity - IR_SLOW_THRESHOLD) / range_span
-            # Clamp to ensure minimum crawl speed and no exceeding full speed
-            speed_multiplier = max(0.05, min(1.0, 1.0 - proximity_factor))
+            # Determine which side to turn (turn away from stronger signal)
+            turn_right = left_side_avg > right_side_avg
             
-            # Apply proportional slowdown
-            twist.linear.x = self.LINEAR_SPD * speed_multiplier
-            
-            # Aggressive veering to escape obstacle early
-            if left_side_avg > right_side_avg:
-                # Stronger signal on left, turn right hard
-                twist.angular.z = -0.6 
-            else:
-                # Stronger signal on right, turn left hard
-                twist.angular.z = 0.6
-            
-            # Alert when very close
-            if front_intensity > IR_STOP_THRESHOLD * 0.8:
-                self.set_leds(255, 0, 0)  # Red - danger!
+            if front_intensity > self.IR_STOP_THRESHOLD:
+                # Very close obstacle (< 5cm)
+                # Hard stop and aggressive turn
+                self.set_leds(255, 0, 0)  # Red
+                twist.linear.x = 0.02  # Minimal forward motion
+                twist.angular.z = 1.0 if turn_right else -1.0  # Max turn
                 self.get_logger().warn(
-                    f">> CRITICAL: Obstacle very close! intensity={front_intensity:.0f}, "
-                    f"crawling at {speed_multiplier:.1%} speed")
-            elif front_intensity > IR_STOP_THRESHOLD * 0.5:
+                    f"EMERGENCY STOP: intensity={front_intensity:.0f}, "
+                    f"turn={'R' if turn_right else 'L'}")
+                
+            elif front_intensity > self.IR_SLOW_THRESHOLD:
+                # Medium distance (~ 10cm)
+                # Proportional slowdown
+                self.set_leds(255, 0, 0)  # Red - critical
+                
+                # Smooth deceleration from SLOW to STOP threshold
+                range_span = self.IR_STOP_THRESHOLD - self.IR_SLOW_THRESHOLD
+                proximity_factor = (front_intensity - self.IR_SLOW_THRESHOLD) / range_span
+                # Clamp: minimum 3% speed, maximum 50% speed (aggressive slowdown)
+                speed_multiplier = max(0.03, min(0.5, 1.0 - proximity_factor))
+                
+                twist.linear.x = self.LINEAR_SPD * speed_multiplier
+                twist.angular.z = 0.8 if turn_right else -0.8  # Hard turn
                 self.get_logger().info(
-                    f">> Approaching obstacle: intensity={front_intensity:.0f}, "
-                    f"speed={speed_multiplier:.1%}")
-
-
+                    f"APPROACHING: intensity={front_intensity:.0f}, "
+                    f"speed={speed_multiplier:.1%}, turn={'R' if turn_right else 'L'}")
+                
+            elif front_intensity > self.IR_EARLY_THRESHOLD:
+                # Far distance (~ 15cm)
+                # Gentle slowdown
+                self.set_leds(255, 165, 0)  # Orange
+                
+                range_span = self.IR_SLOW_THRESHOLD - self.IR_EARLY_THRESHOLD
+                proximity_factor = (front_intensity - self.IR_EARLY_THRESHOLD) / range_span
+                # Clamp: minimum 50% speed, maximum 100% speed
+                speed_multiplier = max(0.5, min(1.0, 1.0 - proximity_factor))
+                
+                twist.linear.x = self.LINEAR_SPD * speed_multiplier
+                twist.angular.z = 0.5 if turn_right else -0.5  # Moderate turn
+                
+            else:
+                # Very far (~ 20cm)
+                # First detection, subtle adjustment
+                self.set_leds(255, 200, 0)  # Yellow
+                
+                twist.linear.x = self.LINEAR_SPD * 0.9  # Slight slowdown
+                twist.angular.z = 0.3 if turn_right else -0.3  # Gentle turn
+ 
+        # ============================================
         # PRIORITY 2: SIDE WALL DETECTION
-        elif left_side_avg > IR_SLOW_THRESHOLD:
+        # ============================================
+        elif left_side_avg > self.IR_EARLY_THRESHOLD:
+            # Left wall detected
             self.set_leds(255, 165, 0)  # Orange
-            # Gentle slowdown for side walls (less aggressive than front)
-            side_range = IR_STOP_THRESHOLD - IR_SLOW_THRESHOLD
-            side_proximity = (left_side_avg - IR_SLOW_THRESHOLD) / side_range
-            side_speed_mult = max(0.6, 1.0 - side_proximity * 0.4)
             
-            twist.linear.x = self.LINEAR_SPD * side_speed_mult
-            twist.angular.z = -0.5  # Veer right away from left wall
+            # Gentle slowdown proportional to wall proximity
+            if left_side_avg > self.IR_SLOW_THRESHOLD:
+                range_span = self.IR_STOP_THRESHOLD - self.IR_SLOW_THRESHOLD
+                proximity_factor = (left_side_avg - self.IR_SLOW_THRESHOLD) / range_span
+                speed_mult = max(0.6, 1.0 - proximity_factor * 0.5)
+            else:
+                speed_mult = 0.85
             
-        elif right_side_avg > IR_SLOW_THRESHOLD:
+            twist.linear.x = self.LINEAR_SPD * speed_mult
+            twist.angular.z = -0.4  # Veer right
+            
+        elif right_side_avg > self.IR_EARLY_THRESHOLD:
+            # Right wall detected
             self.set_leds(255, 165, 0)  # Orange
-            # Gentle slowdown for side walls
-            side_range = IR_STOP_THRESHOLD - IR_SLOW_THRESHOLD
-            side_proximity = (right_side_avg - IR_SLOW_THRESHOLD) / side_range
-            side_speed_mult = max(0.6, 1.0 - side_proximity * 0.4)
             
-            twist.linear.x = self.LINEAR_SPD * side_speed_mult
-            twist.angular.z = 0.5  # Veer left away from right wall
-
+            # Gentle slowdown proportional to wall proximity
+            if right_side_avg > self.IR_SLOW_THRESHOLD:
+                range_span = self.IR_STOP_THRESHOLD - self.IR_SLOW_THRESHOLD
+                proximity_factor = (right_side_avg - self.IR_SLOW_THRESHOLD) / range_span
+                speed_mult = max(0.6, 1.0 - proximity_factor * 0.5)
+            else:
+                speed_mult = 0.85
+            
+            twist.linear.x = self.LINEAR_SPD * speed_mult
+            twist.angular.z = 0.4  # Veer left
+ 
+        # ============================================
         # PRIORITY 3: CLEAR PATH
+        # ============================================
         else:
             self.set_leds(0, 255, 0)  # Green - all clear
             twist.linear.x = self.LINEAR_SPD
             twist.angular.z = 0.0
-
+ 
         self.cmd_pub.publish(twist)
-
 
     # Movement Helpers
     """
