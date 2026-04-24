@@ -9,6 +9,10 @@ def generate_launch_description():
     linear_speed = LaunchConfiguration('linear_speed')
     angular_speed = LaunchConfiguration('angular_speed')
     exploration_time = LaunchConfiguration('exploration_time')
+    ir_very_early_threshold = LaunchConfiguration('ir_very_early_threshold')
+    ir_early_threshold = LaunchConfiguration('ir_early_threshold')
+    ir_slow_threshold = LaunchConfiguration('ir_slow_threshold')
+    ir_stop_threshold = LaunchConfiguration('ir_stop_threshold')
 
     return LaunchDescription([
         # 2. Declare Arguments (so they can be passed via command line)
@@ -32,6 +36,26 @@ def generate_launch_description():
             default_value='60.0',
             description='Total mission time in seconds'
         ),
+        DeclareLaunchArgument(
+            'ir_very_early_threshold',
+            default_value='100',
+            description='Very early IR threshold'
+        ),
+        DeclareLaunchArgument(
+            'ir_early_threshold',
+            default_value='150',
+            description='Early IR threshold'
+        ),
+        DeclareLaunchArgument(
+            'ir_slow_threshold',
+            default_value='250',
+            description='Slowdown IR threshold'
+        ),
+        DeclareLaunchArgument(
+            'ir_stop_threshold',
+            default_value='500',
+            description='Critical stop IR threshold'
+        ),
 
         # 3. The Main Explorer Node (Autonomous Logic)
         Node(
@@ -44,6 +68,10 @@ def generate_launch_description():
                 'linear_speed': linear_speed,
                 'angular_speed': angular_speed,
                 'exploration_time': exploration_time,
+                'ir_very_early_threshold': ir_very_early_threshold,
+                'ir_early_threshold': ir_early_threshold,
+                'ir_slow_threshold': ir_slow_threshold,
+                'ir_stop_threshold': ir_stop_threshold,
             }]
         ),
 
