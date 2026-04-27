@@ -52,6 +52,7 @@ class KeyboardHandler(Node):
         try:
             tty.setraw(fd)
             while self.running:
+                # Raw mode returns escape sequences one byte at a time, so we decode them here
                 key = self.read_key(fd)
                 if key == ' ': # SPACE
                     self.toggle_mode()
@@ -80,18 +81,19 @@ class KeyboardHandler(Node):
         """Publishes the mode string to inform the create3_controller."""
         self.teleop_active = not self.teleop_active
         mode_str = 'TELEOP' if self.teleop_active else 'AUTO'
-        
+
         msg = String()
         msg.data = mode_str
         self.mode_pub.publish(msg)
-        
+
         self.get_logger().info(f'Switching to {mode_str} Mode')
-        # Safety: stop robot on toggle
+        # Stop the robot immediately so mode changes do not inherit stale motion
         self.cmd_pub.publish(Twist())
 
     def handle_teleop_key(self, key):
         """Translates arrow keys to Twist commands."""
         cmd = Twist()
+        # Map each arrow key to one motion axis so teleop stays predictable
         if key == '\x1b[A': # Up
             cmd.linear.x = TELEOP_LINEAR
         elif key == '\x1b[B': # Down

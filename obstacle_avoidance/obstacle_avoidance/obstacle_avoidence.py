@@ -298,9 +298,8 @@ class Explorer(Node):
 
         now_ns = self.get_clock().now().nanoseconds
  
-        # ============================================
-        # EXTRACT IR SENSOR READINGS
-        # ============================================
+        # IR layout on Create 3: 0-2 left, 3 center, 4-6 right.
+        # We use the center trio for front pressure and averaged sides for steering bias.
         readings = [r.value for r in msg.readings]
         max_front = max(readings[2], readings[3], readings[4])
         left_side = (readings[0] + readings[1] + readings[2]) / 3
@@ -310,6 +309,7 @@ class Explorer(Node):
         twist = Twist()
         speed_mult = 1.0
         obstacle_detected = max_front > self.IR_AWARE_VEER or side_max > self.IR_AWARE_VEER
+        # Turn away from the stronger side signal: if left is brighter, steer right
         turn_right = left_side > right_side
         turn_sign = -1.0 if turn_right else 1.0
  
@@ -318,11 +318,13 @@ class Explorer(Node):
         # ============================================
         if max_front > self.IR_CLOSE_STOP:
             self.set_leds(255, 0, 0)
+            # Hard stop forward motion and commit to a strong turn when the obstacle is critical
             speed_mult = 0.0
             twist.angular.z = turn_sign * self.ANGULAR_SPD * 1.8
 
         elif max_front > self.IR_WARNING_SLOW:
             self.set_leds(255, 120, 0)
+            # Scale speed down smoothly as the front reading approaches the stop threshold
             span = max(1.0, self.IR_CLOSE_STOP - self.IR_WARNING_SLOW)
             speed_mult = (self.IR_CLOSE_STOP - max_front) / span
             speed_mult = max(0.0, min(1.0, speed_mult))
@@ -330,6 +332,7 @@ class Explorer(Node):
 
         elif obstacle_detected:
             self.set_leds(255, 255, 0)
+            # Light slowdown keeps the controller responsive while the obstacle is still distant
             speed_mult = 0.85
             twist.angular.z = turn_sign * self.ANGULAR_SPD * 0.8
 
@@ -351,7 +354,8 @@ class Explorer(Node):
         if self.state == RobotState.RETURNING:
             twist.linear.x = min(twist.linear.x, self.LINEAR_SPD * 0.8)
 
-            # Anti-oscillation guard: repeated red-zone cycles force a short turn-lock.
+            # Repeated red-zone hits near corners can cause oscillation, so count them and
+            # periodically force a short turn-only window to break the loop
             if max_front > self.IR_CLOSE_STOP:
                 self.close_red_cycles += 1
             else:
@@ -367,7 +371,7 @@ class Explorer(Node):
                 twist.linear.x = 0.0
                 twist.angular.z = self.turn_lock_sign * self.ANGULAR_SPD * 1.7
 
-            # When path is clear, periodically retry docking goal.
+            # Only retry the docking action when the path is quiet enough to avoid goal spam
             if max_front < self.IR_AWARE_VEER and side_max < self.IR_AWARE_VEER:
                 self.try_send_dock_goal()
  
