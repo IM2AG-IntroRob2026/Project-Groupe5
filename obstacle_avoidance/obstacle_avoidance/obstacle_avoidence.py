@@ -341,7 +341,8 @@ class Explorer(Node):
             self.set_leds(0, 255, 0)
             speed_mult = 1.0
             twist.angular.z = 0.0
- 
+
+        # verification of side obstacles for additional veering, but only if no critical front obstacle
         if side_max > self.IR_WARNING_SLOW:
             speed_mult = min(speed_mult, 0.45)
             if max_front <= self.IR_WARNING_SLOW:
