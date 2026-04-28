@@ -317,11 +317,13 @@ class Explorer(Node):
         # PRIORITY 1: FRONT OBSTACLE AVOIDANCE
         # ============================================
         if max_front > self.IR_CLOSE_STOP:
+            # red path 
             self.set_leds(255, 0, 0)
             speed_mult = 0.0
             twist.angular.z = turn_sign * self.ANGULAR_SPD * 1.8
 
         elif max_front > self.IR_WARNING_SLOW:
+            # orange path - proportional slowdown + turn
             self.set_leds(255, 120, 0)
             span = max(1.0, self.IR_CLOSE_STOP - self.IR_WARNING_SLOW)
             speed_mult = (self.IR_CLOSE_STOP - max_front) / span
@@ -329,11 +331,13 @@ class Explorer(Node):
             twist.angular.z = turn_sign * self.ANGULAR_SPD * 1.5
 
         elif obstacle_detected:
+            # yellow path - early detection, gentle turn
             self.set_leds(255, 255, 0)
             speed_mult = 0.85
             twist.angular.z = turn_sign * self.ANGULAR_SPD * 0.8
 
         else:
+            # green path 
             self.set_leds(0, 255, 0)
             speed_mult = 1.0
             twist.angular.z = 0.0
