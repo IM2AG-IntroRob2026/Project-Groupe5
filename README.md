@@ -66,7 +66,7 @@ The keyboard node opens in a separate `xterm` window and supports:
 To launch the robot with custom motion parameters:
 
 ```bash
-ros2 launch obstacle_avoidance explorer.launch.py linear_speed:=0.25 exploration_time:=120.0
+ros2 launch obstacle_avoidance explorer.launch.py linear_speed:=0.25 exploration_time:=120.0 namespace:=Robot5
 ```
 
 Example with a namespace and IR thresholds:
@@ -75,7 +75,7 @@ Example with a namespace and IR thresholds:
 ros2 launch obstacle_avoidance explorer.launch.py namespace:=Robot5 \
    linear_speed:=0.12 angular_speed:=0.65 exploration_time:=120.0 \
    ir_very_early_threshold:=100 ir_early_threshold:=150 \
-   ir_slow_threshold:=250 ir_stop_threshold:=500
+   ir_slow_threshold:=250 ir_stop_threshold:=500 
 ```
 
 ## Manual Commands
@@ -272,10 +272,10 @@ During return-to-dock operation, we added a turn-lock guard to break repeated re
 Example commands:
 ```bash
 # high-speed
-ros2 launch obstacle_avoidance explorer.launch.py linear_speed:=0.7 angular_speed:=0.65 exploration_time:=60.0
+ros2 launch obstacle_avoidance explorer.launch.py linear_speed:=0.7 angular_speed:=0.65 exploration_time:=60.0 namespace:=Robot5
 
 # low-speed
-ros2 launch obstacle_avoidance explorer.launch.py linear_speed:=0.25 angular_speed:=0.65 exploration_time:=60.0
+ros2 launch obstacle_avoidance explorer.launch.py linear_speed:=0.25 angular_speed:=0.65 exploration_time:=60.0 namespace:=Robot5
 ```
 
 ### Exploration-duration Tests
